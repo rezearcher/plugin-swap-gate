@@ -25,7 +25,54 @@ export function buildGateUrl({ token, side = "buy", notionalUsd = 100, base = GA
   return `${base}/gate/swap?${qs.toString()}`;
 }
 
-/** One-line human summary of a gate response. */
+/**
+ * One-line summary of the PAID sizing block, or "" when the response carries no
+ * usable sizing (free preview, no verifiable pool, or a fail-closed stub). This
+ * is the differentiator no verdict-only rival returns: the agent is told not just
+ * "safe" but the round-trip breakeven, the largest size that stays under 2% price
+ * impact, and what it would actually recover on exit. Feature-detected so a plain
+ * verdict response is unaffected.
+ */
+export function summarizeSizing(out) {
+  const s = out && typeof out === "object" ? out.sizing : null;
+  if (!s || typeof s !== "object" || s.max_safe_notional_usd == null) return "";
+  const bits = [];
+  const be = s.entry_sim?.this_trade?.roundtrip_breakeven_pct;
+  if (typeof be === "number") bits.push(`breakeven ${be}%`);
+  if (typeof s.max_safe_notional_usd === "number") {
+    bits.push(`max safe size $${Math.round(s.max_safe_notional_usd).toLocaleString("en-US")}`);
+  }
+  const ex = s.exit_sim?.this_trade;
+  if (ex && typeof ex.slippage_pct === "number") {
+    const notional = s.this_trade?.notional_usd;
+    const rec =
+      typeof ex.net_recovered_usd === "number" && typeof notional === "number"
+        ? ` (recover $${Math.round(ex.net_recovered_usd).toLocaleString("en-US")} of $${Math.round(notional).toLocaleString("en-US")})`
+        : "";
+    bits.push(`exit slip ${ex.slippage_pct}%${rec}`);
+  }
+  return bits.join(" · ");
+}
+
+/**
+ * Structured view of the paid sizing numbers for an app that branches on values
+ * rather than the summary string. Returns null when no usable sizing is present.
+ * @returns {{ roundtrip_breakeven_pct: number|null, max_safe_notional_usd: number|null, exit_slippage_pct: number|null, exit_net_recovered_usd: number|null }|null}
+ */
+export function sizingValues(out) {
+  const s = out && typeof out === "object" ? out.sizing : null;
+  if (!s || typeof s !== "object" || s.max_safe_notional_usd == null) return null;
+  const en = s.entry_sim?.this_trade || {};
+  const ex = s.exit_sim?.this_trade || {};
+  return {
+    roundtrip_breakeven_pct: typeof en.roundtrip_breakeven_pct === "number" ? en.roundtrip_breakeven_pct : null,
+    max_safe_notional_usd: typeof s.max_safe_notional_usd === "number" ? s.max_safe_notional_usd : null,
+    exit_slippage_pct: typeof ex.slippage_pct === "number" ? ex.slippage_pct : null,
+    exit_net_recovered_usd: typeof ex.net_recovered_usd === "number" ? ex.net_recovered_usd : null,
+  };
+}
+
+/** One-line human summary of a gate response, including the paid sizing when present. */
 export function summarizeGate(out) {
   if (!out || typeof out !== "object") return "no gate response";
   const decision = String(out.decision || "unknown").toUpperCase();
@@ -35,6 +82,8 @@ export function summarizeGate(out) {
   if (typeof out.liquidity_usd === "number") {
     bits.push(`liquidity $${Math.round(out.liquidity_usd).toLocaleString("en-US")}`);
   }
+  const sizing = summarizeSizing(out);
+  if (sizing) bits.push(sizing);
   return `${decision}: ${bits.join(" · ") || "no detail"}`;
 }
 
