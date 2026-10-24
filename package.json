@@ -1,6 +1,6 @@
 {
   "name": "@grey-ridge/elizaos-plugin-swap-gate",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Pre-trade token-safety gate for Base trading agents (ElizaOS): honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC ($0.008/call). Call before every swap.",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,11 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "images"],
+  "files": [
+    "dist",
+    "README.md",
+    "images"
+  ],
   "keywords": [
     "plugin",
     "elizaos",
@@ -35,7 +39,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc -p tsconfig.check.json --noEmit",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepare": "tsup"
   },
   "dependencies": {
     "@x402/core": "^2.15.0",

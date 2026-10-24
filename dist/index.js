@@ -33,6 +33,35 @@ function buildGateUrl({ token, side = "buy", notionalUsd = 100, base = GATE_BASE
   const qs = new URLSearchParams({ token, side: s, notional_usd: String(n) });
   return `${base}/gate/swap?${qs.toString()}`;
 }
+function summarizeSizing(out) {
+  const s = out && typeof out === "object" ? out.sizing : null;
+  if (!s || typeof s !== "object" || s.max_safe_notional_usd == null) return "";
+  const bits = [];
+  const be = s.entry_sim?.this_trade?.roundtrip_breakeven_pct;
+  if (typeof be === "number") bits.push(`breakeven ${be}%`);
+  if (typeof s.max_safe_notional_usd === "number") {
+    bits.push(`max safe size $${Math.round(s.max_safe_notional_usd).toLocaleString("en-US")}`);
+  }
+  const ex = s.exit_sim?.this_trade;
+  if (ex && typeof ex.slippage_pct === "number") {
+    const notional = s.this_trade?.notional_usd;
+    const rec = typeof ex.net_recovered_usd === "number" && typeof notional === "number" ? ` (recover $${Math.round(ex.net_recovered_usd).toLocaleString("en-US")} of $${Math.round(notional).toLocaleString("en-US")})` : "";
+    bits.push(`exit slip ${ex.slippage_pct}%${rec}`);
+  }
+  return bits.join(" \xB7 ");
+}
+function sizingValues(out) {
+  const s = out && typeof out === "object" ? out.sizing : null;
+  if (!s || typeof s !== "object" || s.max_safe_notional_usd == null) return null;
+  const en = s.entry_sim?.this_trade || {};
+  const ex = s.exit_sim?.this_trade || {};
+  return {
+    roundtrip_breakeven_pct: typeof en.roundtrip_breakeven_pct === "number" ? en.roundtrip_breakeven_pct : null,
+    max_safe_notional_usd: typeof s.max_safe_notional_usd === "number" ? s.max_safe_notional_usd : null,
+    exit_slippage_pct: typeof ex.slippage_pct === "number" ? ex.slippage_pct : null,
+    exit_net_recovered_usd: typeof ex.net_recovered_usd === "number" ? ex.net_recovered_usd : null
+  };
+}
 function summarizeGate(out) {
   if (!out || typeof out !== "object") return "no gate response";
   const decision = String(out.decision || "unknown").toUpperCase();
@@ -42,6 +71,8 @@ function summarizeGate(out) {
   if (typeof out.liquidity_usd === "number") {
     bits.push(`liquidity $${Math.round(out.liquidity_usd).toLocaleString("en-US")}`);
   }
+  const sizing = summarizeSizing(out);
+  if (sizing) bits.push(sizing);
   return `${decision}: ${bits.join(" \xB7 ") || "no detail"}`;
 }
 function evaluateTrade(out, { maxBreakevenPct = 15, maxExitSlippagePct = 10 } = {}) {
@@ -65,13 +96,64 @@ function evaluateTrade(out, { maxBreakevenPct = 15, maxExitSlippagePct = 10 } = 
   }
   return { go: reasons.length === 0, reasons: reasons.length ? reasons : ["cleared"] };
 }
-async function fetchGate(payFetch, { token, side = "buy", notionalUsd = 100, base = GATE_BASE } = {}) {
-  const url = buildGateUrl({ token, side, notionalUsd, base });
-  const res = await payFetch(url);
+function buildPreviewUrl({ token, side = "buy", notionalUsd = 100, base = GATE_BASE } = {}) {
+  if (!ADDR_RE.test(String(token || ""))) {
+    throw new Error(`invalid Base token address: ${token}`);
+  }
+  const s = side === "sell" ? "sell" : "buy";
+  const n = Number(notionalUsd);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid notional_usd: ${notionalUsd}`);
+  const qs = new URLSearchParams({ token, side: s, notional_usd: String(n) });
+  return `${base}/gate/swap/preview?${qs.toString()}`;
+}
+function fundOnrampHint() {
+  return "Grey Ridge swap-gate is running in FREE preview mode: the honeypot / sellability / liquidity verdict is live, but the paid exit-simulation and trade sizing are withheld. To unlock them, set SWAP_GATE_PRIVATE_KEY to a Base wallet holding ~1 USDC (covers ~125 checks at $0.008 each, paid inline per call via x402 \u2014 no API key, no subscription).";
+}
+async function fetchGatePreview(args = {}, { previewFetch } = {}) {
+  const f = previewFetch || (typeof fetch !== "undefined" ? fetch : null);
+  if (!f) throw new Error("no fetch available for gate preview");
+  const url = buildPreviewUrl(args);
+  const res = await f(url);
   if (!res.ok && res.status !== 200) {
-    throw new Error(`gate request failed: HTTP ${res.status}`);
+    throw new Error(`gate preview failed: HTTP ${res.status}`);
   }
   return res.json();
+}
+async function fetchGateOrPreview(payFetch, args = {}, { hasKey = true, previewFetch } = {}) {
+  const withActivation = (out2, reason2) => {
+    if (out2 && typeof out2 === "object") {
+      out2.paid = false;
+      let paidUrl;
+      try {
+        paidUrl = buildGateUrl(args);
+      } catch {
+        paidUrl = void 0;
+      }
+      out2.activation = {
+        needed: true,
+        mode: "free_preview",
+        reason: reason2,
+        hint: fundOnrampHint(),
+        paid_url: out2.upgrade && out2.upgrade.paid_url || paidUrl,
+        price_usdc: "0.008"
+      };
+    }
+    return out2;
+  };
+  if (!hasKey) {
+    const out2 = await fetchGatePreview(args, { previewFetch });
+    return withActivation(out2, "no SWAP_GATE_PRIVATE_KEY configured");
+  }
+  const url = buildGateUrl(args);
+  const res = await payFetch(url);
+  if (res.ok || res.status === 200) {
+    const out2 = await res.json();
+    if (out2 && typeof out2 === "object") out2.paid = true;
+    return out2;
+  }
+  const reason = res.status === 402 ? "wallet not funded (paid /gate/swap returned 402)" : `paid /gate/swap returned HTTP ${res.status}`;
+  const out = await fetchGatePreview(args, { previewFetch });
+  return withActivation(out, reason);
 }
 function buildReportUrl({ token, base = GATE_BASE } = {}) {
   if (!ADDR_RE.test(String(token || ""))) {
@@ -174,19 +256,38 @@ var checkTokenBeforeSwap = {
       const notionalUsd = optNotional ?? num(runtime, "SWAP_GATE_NOTIONAL_USD", 100);
       const base = runtime.getSetting("SWAP_GATE_BASE_URL") || GATE_BASE;
       const privateKey = runtime.getSetting("SWAP_GATE_PRIVATE_KEY");
+      const hasKey = typeof privateKey === "string" && privateKey.length > 0;
       const payFetch = makePayFetch(privateKey);
-      const out = await fetchGate(payFetch, { token, side, notionalUsd, base });
+      const out = await fetchGateOrPreview(payFetch, { token, side, notionalUsd, base }, { hasKey });
       const maxBreakevenPct = num(runtime, "SWAP_GATE_MAX_BREAKEVEN_PCT", 15);
       const maxExitSlippagePct = num(runtime, "SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT", 10);
       const verdict = evaluateTrade(out, { maxBreakevenPct, maxExitSlippagePct });
       const summary = summarizeGate(out);
-      const text2 = verdict.go ? `\u2705 ${summary} \u2014 safe to proceed.` : `\u26D4 ${summary} \u2014 skip: ${verdict.reasons.join("; ")}.`;
+      const sizing = sizingValues(out);
+      const activation = out.activation;
+      const base2 = verdict.go ? `\u2705 ${summary} \u2014 safe to proceed.` : `\u26D4 ${summary} \u2014 skip: ${verdict.reasons.join("; ")}.`;
+      const text2 = activation?.needed ? `${base2}
+\u2139\uFE0F ${activation.hint}` : base2;
       await callback?.({ text: text2, content: out });
       return {
         success: true,
         text: text2,
-        values: { proceed: verdict.go, decision: out.decision, risk_score: out.risk_score },
-        data: { gate: out, verdict }
+        values: {
+          proceed: verdict.go,
+          decision: out.decision,
+          risk_score: out.risk_score,
+          // true when the paid x402 call settled; false on the free-preview path.
+          paid: out.paid === true,
+          activation_needed: activation?.needed === true,
+          // Sizing-aware values: the only pre-trade safety plugin that hands the
+          // agent an actionable size/exit alongside the verdict (null if the
+          // response had no verifiable pool, e.g. the free preview path).
+          roundtrip_breakeven_pct: sizing?.roundtrip_breakeven_pct ?? null,
+          max_safe_notional_usd: sizing?.max_safe_notional_usd ?? null,
+          exit_slippage_pct: sizing?.exit_slippage_pct ?? null,
+          sizing_summary: summarizeSizing(out) || null
+        },
+        data: { gate: out, verdict, sizing }
       };
     } catch (error) {
       const text = `Pre-trade safety check failed: ${error.message}`;
