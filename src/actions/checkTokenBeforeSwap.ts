@@ -18,6 +18,8 @@ import {
   extractToken,
   fetchGate,
   summarizeGate,
+  summarizeSizing,
+  sizingValues,
   evaluateTrade,
   GATE_BASE,
 } from "../gate.mjs";
@@ -83,7 +85,10 @@ export const checkTokenBeforeSwap: Action = {
       const maxExitSlippagePct = num(runtime, "SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT", 10);
       const verdict = evaluateTrade(out, { maxBreakevenPct, maxExitSlippagePct });
 
+      // summarizeGate already folds in the paid sizing line; keep a separate
+      // handle on it so an app branching on `values` gets the moat numbers too.
       const summary = summarizeGate(out);
+      const sizing = sizingValues(out);
       const text2 = verdict.go
         ? `✅ ${summary} — safe to proceed.`
         : `⛔ ${summary} — skip: ${verdict.reasons.join("; ")}.`;
@@ -93,8 +98,19 @@ export const checkTokenBeforeSwap: Action = {
       return {
         success: true,
         text: text2,
-        values: { proceed: verdict.go, decision: out.decision, risk_score: out.risk_score },
-        data: { gate: out, verdict },
+        values: {
+          proceed: verdict.go,
+          decision: out.decision,
+          risk_score: out.risk_score,
+          // Sizing-aware values: the only pre-trade safety plugin that hands the
+          // agent an actionable size/exit alongside the verdict (null if the
+          // response had no verifiable pool, e.g. the free preview path).
+          roundtrip_breakeven_pct: sizing?.roundtrip_breakeven_pct ?? null,
+          max_safe_notional_usd: sizing?.max_safe_notional_usd ?? null,
+          exit_slippage_pct: sizing?.exit_slippage_pct ?? null,
+          sizing_summary: summarizeSizing(out) || null,
+        },
+        data: { gate: out, verdict, sizing },
       };
     } catch (error) {
       const text = `Pre-trade safety check failed: ${(error as Error).message}`;
