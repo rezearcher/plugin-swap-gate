@@ -1,4 +1,4 @@
-# plugin-swap-gate
+# @grey-ridge/elizaos-plugin-swap-gate
 
 **Pre-trade token-safety gate for Base trading agents.** One action your ElizaOS agent runs *before every swap*: is this token a honeypot, can you actually sell it, do its admin controls let the deployer rug it, and is your order too big for the pool? You get a `GO` / `HOLD` / `BLOCK` decision and a round-trip-friction-aware go/no-go in a single fast call.
 
@@ -31,15 +31,15 @@ This is a **heuristic pre-trade risk signal**, not financial advice and not a gu
 
 ```bash
 npm install @grey-ridge/elizaos-plugin-swap-gate
-# or from git: npm install github:rezearcher/plugin-swap-gate
+# or: bun add @grey-ridge/elizaos-plugin-swap-gate
 ```
 
-Published on npm as **`@grey-ridge/elizaos-plugin-swap-gate`**. The build is committed to the git repo too, so the git fallback needs no compile step either.
+Installs directly from source — the build is committed, so there is nothing to compile.
 
 Add it to your character/agent plugins:
 
 ```ts
-import swapGatePlugin from "plugin-swap-gate";
+import swapGatePlugin from "@grey-ridge/elizaos-plugin-swap-gate";
 
 export const character = {
   name: "MyTrader",
@@ -69,7 +69,7 @@ Both are paid inline with x402 USDC and **fail closed** (skip / `safe:false`) if
 | `SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT` | no | `10` | Skip a `GO` whose modelled exit slippage exceeds this %. |
 | `SWAP_GATE_BASE_URL` | no | hosted Worker | Override the gate endpoint. |
 
-\* Without a key the action still runs but only reaches the free preview; wire the key so paid calls return the full `sizing` block and a real paid verdict.
+\* Without a key — or with a key whose wallet is not yet funded — the action **degrades open**: it returns a real `GO`/`BLOCK` from the free preview (honeypot / sellability / liquidity are unchanged) and appends a one-line hint telling you to set `SWAP_GATE_PRIVATE_KEY` to a Base wallet holding ~1 USDC to unlock the paid `sizing` + exit-simulation. It never throws an opaque `HTTP 402`, so a fresh install still protects every trade while you wire the wallet.
 
 ## Use
 
