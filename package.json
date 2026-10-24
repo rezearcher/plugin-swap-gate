@@ -1,6 +1,6 @@
 {
   "name": "plugin-swap-gate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pre-trade token-safety gate for Base trading agents (ElizaOS): honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC ($0.008/call). Call before every swap.",
   "type": "module",
   "main": "dist/index.js",
