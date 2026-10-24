@@ -16,7 +16,7 @@ import { makePayFetch } from "../client.js";
 // without the agent runtime. Imported with the .mjs extension on purpose.
 import {
   extractToken,
-  fetchGate,
+  fetchGateOrPreview,
   summarizeGate,
   summarizeSizing,
   sizingValues,
@@ -77,9 +77,13 @@ export const checkTokenBeforeSwap: Action = {
       const notionalUsd = optNotional ?? num(runtime, "SWAP_GATE_NOTIONAL_USD", 100);
       const base = (runtime.getSetting("SWAP_GATE_BASE_URL") as string) || GATE_BASE;
       const privateKey = runtime.getSetting("SWAP_GATE_PRIVATE_KEY") as string | undefined;
+      const hasKey = typeof privateKey === "string" && privateKey.length > 0;
 
       const payFetch = makePayFetch(privateKey);
-      const out = await fetchGate(payFetch, { token, side, notionalUsd, base });
+      // Degrades OPEN to the free preview when no wallet is configured/funded,
+      // so a fresh install returns a real GO/BLOCK plus a fund-onramp hint
+      // instead of an opaque "HTTP 402" throw that would block every trade.
+      const out = await fetchGateOrPreview(payFetch, { token, side, notionalUsd, base }, { hasKey });
 
       const maxBreakevenPct = num(runtime, "SWAP_GATE_MAX_BREAKEVEN_PCT", 15);
       const maxExitSlippagePct = num(runtime, "SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT", 10);
@@ -89,9 +93,12 @@ export const checkTokenBeforeSwap: Action = {
       // handle on it so an app branching on `values` gets the moat numbers too.
       const summary = summarizeGate(out);
       const sizing = sizingValues(out);
-      const text2 = verdict.go
+      const activation = (out as { activation?: { needed?: boolean; hint?: string } }).activation;
+      const base2 = verdict.go
         ? `✅ ${summary} — safe to proceed.`
         : `⛔ ${summary} — skip: ${verdict.reasons.join("; ")}.`;
+      // Free-preview mode: tell the dev how to unlock the paid tier (never silent).
+      const text2 = activation?.needed ? `${base2}\nℹ️ ${activation.hint}` : base2;
 
       await callback?.({ text: text2, content: out });
 
@@ -102,6 +109,9 @@ export const checkTokenBeforeSwap: Action = {
           proceed: verdict.go,
           decision: out.decision,
           risk_score: out.risk_score,
+          // true when the paid x402 call settled; false on the free-preview path.
+          paid: (out as { paid?: boolean }).paid === true,
+          activation_needed: activation?.needed === true,
           // Sizing-aware values: the only pre-trade safety plugin that hands the
           // agent an actionable size/exit alongside the verdict (null if the
           // response had no verifiable pool, e.g. the free preview path).
