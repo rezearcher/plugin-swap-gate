@@ -2,11 +2,15 @@ import type {
   Action,
   ActionResult,
   HandlerCallback,
-  HandlerOptions,
   IAgentRuntime,
   Memory,
   State,
 } from "@elizaos/core";
+
+// ElizaOS passes the handler's 5th arg as an untyped options bag (its public
+// type for it is not a stable named export across versions), so we type it as a
+// plain record and narrow each field we read below.
+type HandlerOptions = Record<string, unknown>;
 import { makePayFetch } from "../client.js";
 // Core money-logic lives in a dependency-free module so it is unit-tested
 // without the agent runtime. Imported with the .mjs extension on purpose.

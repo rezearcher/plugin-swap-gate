@@ -73,6 +73,76 @@ async function fetchGate(payFetch, { token, side = "buy", notionalUsd = 100, bas
   }
   return res.json();
 }
+function buildReportUrl({ token, base = GATE_BASE } = {}) {
+  if (!ADDR_RE.test(String(token || ""))) {
+    throw new Error(`invalid Base token address: ${token}`);
+  }
+  const qs = new URLSearchParams({ token });
+  return `${base}/chain/token-report?${qs.toString()}`;
+}
+function summarizeReport(out) {
+  if (!out || typeof out !== "object") return "no token-report response";
+  const verdict = String(out.verdict || "unknown").toUpperCase();
+  const bits = [];
+  if (typeof out.risk_score === "number") bits.push(`risk ${out.risk_score}/100`);
+  const liq = out.liquidity?.wethPoolUsd;
+  if (typeof liq === "number") {
+    bits.push(`liquidity $${Math.round(liq).toLocaleString("en-US")}`);
+  }
+  if (Array.isArray(out.reasons) && out.reasons.length) {
+    bits.push(out.reasons.slice(0, 3).join("; "));
+  }
+  return `${verdict}: ${bits.join(" \xB7 ") || "no detail"}`;
+}
+function evaluateReport(out, { maxRiskScore = 60 } = {}) {
+  const reasons = [];
+  if (!out || typeof out !== "object") return { safe: false, reasons: ["no token-report response"] };
+  const verdict = String(out.verdict || "").toUpperCase();
+  const sec = out.security || {};
+  if (sec.isHoneypot === true) reasons.push("honeypot: a real wallet cannot sell this token");
+  if (sec.sellable === false) reasons.push("not sellable");
+  if (verdict === "AVOID") {
+    reasons.push(`verdict AVOID: ${(out.reasons || []).slice(0, 3).join("; ") || "high risk"}`);
+  }
+  if (typeof out.risk_score === "number" && out.risk_score > maxRiskScore) {
+    reasons.push(`risk_score ${out.risk_score} > ${maxRiskScore}`);
+  }
+  if (verdict === "CAUTION" && reasons.length === 0) {
+    reasons.push(`verdict CAUTION: ${(out.reasons || []).slice(0, 2).join("; ") || "review before trading"}`);
+  }
+  const safe = reasons.length === 0 && verdict === "SAFE";
+  return { safe, reasons: reasons.length ? reasons : ["cleared \u2014 SAFE"] };
+}
+async function fetchTokenReport(payFetch, { token, base = GATE_BASE } = {}) {
+  const url = buildReportUrl({ token, base });
+  const res = await payFetch(url);
+  if (!res.ok && res.status !== 200) {
+    throw new Error(`token-report request failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+async function runTokenReport(payFetch, args = {}, { maxRiskScore = 60 } = {}) {
+  try {
+    const out = await fetchTokenReport(payFetch, args);
+    const ev = evaluateReport(out, { maxRiskScore });
+    return {
+      ...out,
+      safe: ev.safe,
+      guard_reasons: ev.reasons,
+      summary: summarizeReport(out)
+    };
+  } catch (err) {
+    const reason = `token-report unavailable: ${err?.message || err}; fail closed`;
+    return {
+      verdict: "AVOID",
+      risk_score: 100,
+      safe: false,
+      reason,
+      guard_reasons: ["token-report unreachable \u2014 fail closed"],
+      summary: "AVOID: token-report unreachable \u2014 fail closed"
+    };
+  }
+}
 
 // src/actions/checkTokenBeforeSwap.ts
 function num(runtime, key, fallback) {
@@ -148,11 +218,78 @@ var checkTokenBeforeSwap = {
   ]
 };
 
+// src/actions/reportTokenSafety.ts
+function num2(runtime, key, fallback) {
+  const v = runtime.getSetting(key);
+  const n = v == null ? NaN : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+var reportTokenSafety = {
+  name: "REPORT_TOKEN_SAFETY",
+  similes: ["TOKEN_REPORT", "TOKEN_AUDIT", "VET_TOKEN", "RUG_CHECK", "SCREEN_TOKEN"],
+  description: "Token-safety report for a Base ERC-20 via Grey Ridge /chain/token-report ($0.01 USDC per call): SAFE/CAUTION/AVOID verdict + risk_score (0-100) + reasons, bundling honeypot/sellability sim, admin-control checks, measured transfer tax and WETH-pool liquidity. Use to screen a token before deciding to trade.",
+  validate: async (runtime, message) => {
+    const text = message?.content?.text || "";
+    return !!extractToken(text) || !!runtime.getSetting("SWAP_GATE_TOKEN");
+  },
+  handler: async (runtime, message, _state, options, callback) => {
+    try {
+      const optToken = typeof options?.token === "string" ? options.token : void 0;
+      const text = message?.content?.text || "";
+      const token = optToken || runtime.getSetting("SWAP_GATE_TOKEN") || extractToken(text);
+      if (!token) {
+        const msg = "No Base token address (0x\u202640 hex) found to vet.";
+        await callback?.({ text: msg });
+        return { success: false, text: msg };
+      }
+      const base = runtime.getSetting("SWAP_GATE_BASE_URL") || GATE_BASE;
+      const privateKey = runtime.getSetting("SWAP_GATE_PRIVATE_KEY");
+      const maxRiskScore = num2(runtime, "TOKEN_REPORT_MAX_RISK_SCORE", 60);
+      const payFetch = makePayFetch(privateKey);
+      const out = await runTokenReport(payFetch, { token, base }, { maxRiskScore });
+      const text2 = out.safe ? `\u2705 ${out.summary} \u2014 screened safe.` : `\u26A0\uFE0F ${out.summary} \u2014 ${(out.guard_reasons || []).join("; ")}.`;
+      await callback?.({ text: text2, content: out });
+      return {
+        success: true,
+        text: text2,
+        values: { safe: out.safe, verdict: out.verdict, risk_score: out.risk_score },
+        data: { report: out }
+      };
+    } catch (error) {
+      const text = `Token-safety report failed: ${error.message}`;
+      await callback?.({ text });
+      return { success: false, text, error };
+    }
+  },
+  examples: [
+    [
+      { name: "{{user}}", content: { text: "Is 0x4ed4e862860bed51a9570b96d89af5e1b0efefed worth trading?" } },
+      {
+        name: "{{agent}}",
+        content: {
+          text: "Running a full token-safety report\u2026",
+          actions: ["REPORT_TOKEN_SAFETY"]
+        }
+      }
+    ],
+    [
+      { name: "{{user}}", content: { text: "Rug-check 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 for me." } },
+      {
+        name: "{{agent}}",
+        content: {
+          text: "Pulling honeypot/tax/liquidity and an overall verdict.",
+          actions: ["REPORT_TOKEN_SAFETY"]
+        }
+      }
+    ]
+  ]
+};
+
 // src/index.ts
 var swapGatePlugin = {
   name: "plugin-swap-gate",
-  description: "Pre-trade token-safety gate for Base trading agents: honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC. Call before every swap.",
-  actions: [checkTokenBeforeSwap],
+  description: "Token-safety for Base trading agents: CHECK_TOKEN_BEFORE_SWAP (pre-trade gate via /gate/swap) and REPORT_TOKEN_SAFETY (screening report via /chain/token-report) \u2014 honeypot, sellability, admin-control and liquidity checks, paid inline with x402 USDC.",
+  actions: [checkTokenBeforeSwap, reportTokenSafety],
   init: async (_config, _runtime) => {
   }
 };
@@ -160,6 +297,7 @@ var index_default = swapGatePlugin;
 export {
   checkTokenBeforeSwap,
   index_default as default,
+  reportTokenSafety,
   swapGatePlugin
 };
 //# sourceMappingURL=index.js.map

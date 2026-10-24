@@ -48,3 +48,56 @@ export declare function fetchGate(
   payFetch: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<GateResponse> }>,
   args?: GateArgs
 ): Promise<GateResponse>;
+
+export interface TokenReportResponse {
+  token?: string;
+  chain?: string;
+  token_meta?: { symbol?: string; name?: string; decimals?: number };
+  security?: {
+    isHoneypot?: boolean;
+    sellable?: boolean;
+    transferTaxBps?: number | null;
+    taxMutable?: boolean;
+    ownerRenounced?: boolean;
+    upgradeableProxy?: boolean;
+    canMint?: boolean;
+    canPause?: boolean;
+    hasBlacklist?: boolean;
+    simStatus?: string;
+    [k: string]: unknown;
+  };
+  liquidity?: { wethPoolUsd?: number; dex?: string; [k: string]: unknown };
+  verdict?: "SAFE" | "CAUTION" | "AVOID" | string;
+  risk_score?: number;
+  reasons?: string[];
+  analyzed_at?: string;
+  disclaimer?: string;
+  [k: string]: unknown;
+}
+
+export interface ReportDecision {
+  safe: boolean;
+  reasons: string[];
+}
+
+export interface TokenReportResult extends TokenReportResponse {
+  safe: boolean;
+  guard_reasons: string[];
+  summary: string;
+}
+
+export declare function buildReportUrl(args?: { token: string; base?: string }): string;
+export declare function summarizeReport(out: TokenReportResponse | null | undefined): string;
+export declare function evaluateReport(
+  out: TokenReportResponse | null | undefined,
+  opts?: { maxRiskScore?: number }
+): ReportDecision;
+export declare function fetchTokenReport(
+  payFetch: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<TokenReportResponse> }>,
+  args?: { token: string; base?: string }
+): Promise<TokenReportResponse>;
+export declare function runTokenReport(
+  payFetch: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<TokenReportResponse> }>,
+  args?: { token: string; base?: string },
+  opts?: { maxRiskScore?: number }
+): Promise<TokenReportResult>;

@@ -48,6 +48,17 @@ export const character = {
 };
 ```
 
+## Two actions
+
+The plugin registers **two** paid pre-trade safety actions; the agent picks the right one from the user's intent:
+
+| Action | Route | Price | When the agent uses it |
+|---|---|---|---|
+| `CHECK_TOKEN_BEFORE_SWAP` | `/gate/swap` | $0.008 | The final gate *right before a swap*, sized to a notional — returns `GO / HOLD / BLOCK` + a round-trip-friction-aware `proceed`. |
+| `REPORT_TOKEN_SAFETY` | `/chain/token-report` | $0.01 | **Screening** a candidate token earlier ("is 0x… worth trading / is it a rug?") — returns a `SAFE / CAUTION / AVOID` verdict + a `safe` boolean, no trade size needed. |
+
+Both are paid inline with x402 USDC and **fail closed** (skip / `safe:false`) if the route is unreachable, so an outage can never green-light a trade.
+
 ## Configure (agent settings / env)
 
 | Setting | Required | Default | Purpose |

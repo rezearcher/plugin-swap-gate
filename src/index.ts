@@ -1,22 +1,25 @@
 import type { Plugin } from "@elizaos/core";
 import { checkTokenBeforeSwap } from "./actions/checkTokenBeforeSwap.js";
+import { reportTokenSafety } from "./actions/reportTokenSafety.js";
 
 /**
  * Grey Ridge pre-trade safety gate for ElizaOS trading agents.
  *
- * Wraps the Base-native /gate/swap route (honeypot + sellability +
- * admin-control + liquidity-vs-trade-size) as a single pre-trade action,
- * paid inline per call via x402 USDC ($0.008) — no API key, no subscription.
+ * Two actions, both paid inline per call via x402 USDC — no API key, no
+ * subscription: CHECK_TOKEN_BEFORE_SWAP wraps /gate/swap (the final pre-swap
+ * gate, sized to a notional, $0.008); REPORT_TOKEN_SAFETY wraps
+ * /chain/token-report (a full SAFE/CAUTION/AVOID screening report, $0.01) for
+ * vetting a candidate token before deciding to trade it.
  */
 export const swapGatePlugin: Plugin = {
   name: "plugin-swap-gate",
   description:
-    "Pre-trade token-safety gate for Base trading agents: honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC. Call before every swap.",
-  actions: [checkTokenBeforeSwap],
+    "Token-safety for Base trading agents: CHECK_TOKEN_BEFORE_SWAP (pre-trade gate via /gate/swap) and REPORT_TOKEN_SAFETY (screening report via /chain/token-report) — honeypot, sellability, admin-control and liquidity checks, paid inline with x402 USDC.",
+  actions: [checkTokenBeforeSwap, reportTokenSafety],
   init: async (_config, _runtime) => {
-    // Nothing to warm up; the action lazily builds its x402 fetch on first use.
+    // Nothing to warm up; each action lazily builds its x402 fetch on first use.
   },
 };
 
-export { checkTokenBeforeSwap };
+export { checkTokenBeforeSwap, reportTokenSafety };
 export default swapGatePlugin;
