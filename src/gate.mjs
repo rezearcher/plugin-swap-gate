@@ -131,6 +131,115 @@ export async function fetchGate(payFetch, { token, side = "buy", notionalUsd = 1
   return res.json();
 }
 
+/** Build the FREE /gate/swap/preview URL (same params as the paid gate; no x402 payment, rate-capped). */
+export function buildPreviewUrl({ token, side = "buy", notionalUsd = 100, base = GATE_BASE } = {}) {
+  if (!ADDR_RE.test(String(token || ""))) {
+    throw new Error(`invalid Base token address: ${token}`);
+  }
+  const s = side === "sell" ? "sell" : "buy";
+  const n = Number(notionalUsd);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid notional_usd: ${notionalUsd}`);
+  const qs = new URLSearchParams({ token, side: s, notional_usd: String(n) });
+  return `${base}/gate/swap/preview?${qs.toString()}`;
+}
+
+/**
+ * The one-line onboarding hint shown when the plugin runs WITHOUT a funded
+ * wallet, so a wallet-less install learns exactly how to turn on the paid tier
+ * instead of silently blocking (or opaquely erroring on) every trade.
+ */
+export function fundOnrampHint() {
+  return (
+    "Grey Ridge swap-gate is running in FREE preview mode: the honeypot / " +
+    "sellability / liquidity verdict is live, but the paid exit-simulation and " +
+    "trade sizing are withheld. To unlock them, set SWAP_GATE_PRIVATE_KEY to a " +
+    "Base wallet holding ~1 USDC (covers ~125 checks at $0.008 each, paid inline " +
+    "per call via x402 — no API key, no subscription)."
+  );
+}
+
+/**
+ * Read the FREE /gate/swap/preview verdict with a plain fetch (never pays).
+ * `previewFetch` is injectable for tests; defaults to the global fetch.
+ * @returns {Promise<object>} parsed preview JSON
+ */
+export async function fetchGatePreview(args = {}, { previewFetch } = {}) {
+  const f = previewFetch || (typeof fetch !== "undefined" ? fetch : null);
+  if (!f) throw new Error("no fetch available for gate preview");
+  const url = buildPreviewUrl(args);
+  const res = await f(url);
+  if (!res.ok && res.status !== 200) {
+    throw new Error(`gate preview failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Fetch a gate verdict, DEGRADING OPEN to the free preview when the paid call
+ * cannot be paid — no SWAP_GATE_PRIVATE_KEY configured, or a configured wallet
+ * that is unfunded (paid /gate/swap returns 402). The safety verdict (honeypot
+ * / sellability / liquidity) is identical on the free preview; only the paid
+ * exit-simulation + sizing block is withheld. This closes the silent activation
+ * cliff: a wallet-less install still gets a real GO/BLOCK plus a fund-onramp
+ * hint, instead of an opaque "HTTP 402" throw that would block every trade.
+ *
+ * `hasKey` lets the caller skip a wasted 402 round-trip when no signer is set.
+ * The returned object carries `paid` (bool); when running free it also carries
+ * an `activation` block { needed, mode, reason, hint, paid_url, price_usdc }.
+ *
+ * Throws ONLY when the paid route returns a non-200 AND the preview is also
+ * unreachable — a true outage the caller must fail CLOSED on. A thrown payFetch
+ * (connection error) likewise propagates so the caller fails closed.
+ * @returns {Promise<object>} parsed gate JSON (paid) or preview JSON (+activation)
+ */
+export async function fetchGateOrPreview(payFetch, args = {}, { hasKey = true, previewFetch } = {}) {
+  const withActivation = (out, reason) => {
+    if (out && typeof out === "object") {
+      out.paid = false;
+      let paidUrl;
+      try {
+        paidUrl = buildGateUrl(args);
+      } catch {
+        paidUrl = undefined;
+      }
+      out.activation = {
+        needed: true,
+        mode: "free_preview",
+        reason,
+        hint: fundOnrampHint(),
+        paid_url: (out.upgrade && out.upgrade.paid_url) || paidUrl,
+        price_usdc: "0.008",
+      };
+    }
+    return out;
+  };
+
+  // No signer configured: read the free preview directly, don't waste a 402.
+  if (!hasKey) {
+    const out = await fetchGatePreview(args, { previewFetch });
+    return withActivation(out, "no SWAP_GATE_PRIVATE_KEY configured");
+  }
+
+  // Signer present: try the paid gate first.
+  const url = buildGateUrl(args);
+  const res = await payFetch(url);
+  if (res.ok || res.status === 200) {
+    const out = await res.json();
+    if (out && typeof out === "object") out.paid = true;
+    return out;
+  }
+  // 402 = wallet unfunded / payment not completed; any other non-200 = paid-side
+  // trouble. Either way fall back to the free preview rather than throwing — a
+  // real verdict beats blocking every trade. A preview failure here propagates
+  // so the caller fails CLOSED (both sides down = true outage).
+  const reason =
+    res.status === 402
+      ? "wallet not funded (paid /gate/swap returned 402)"
+      : `paid /gate/swap returned HTTP ${res.status}`;
+  const out = await fetchGatePreview(args, { previewFetch });
+  return withActivation(out, reason);
+}
+
 /** Build the paid /chain/token-report URL. Throws on a malformed token so a bad call never silently costs a payment. */
 export function buildReportUrl({ token, base = GATE_BASE } = {}) {
   if (!ADDR_RE.test(String(token || ""))) {
