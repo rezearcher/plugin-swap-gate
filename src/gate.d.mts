@@ -23,6 +23,10 @@ export interface GateResponse {
   token_meta?: { symbol?: string; name?: string; decimals?: number };
   analyzed_at?: string;
   disclaimer?: string;
+  /** true when the paid x402 gate settled; false/absent on the free-preview path. */
+  paid?: boolean;
+  /** present only on the free-preview degrade-open path — how to unlock paid. */
+  activation?: GateActivation;
   sizing?: {
     max_safe_notional_usd?: number;
     this_trade?: { price_impact_pct?: number };
@@ -56,6 +60,34 @@ export declare function evaluateTrade(
 export declare function fetchGate(
   payFetch: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<GateResponse> }>,
   args?: GateArgs
+): Promise<GateResponse>;
+
+export interface GateActivation {
+  needed: boolean;
+  mode: string;
+  reason: string;
+  hint: string;
+  paid_url?: string;
+  price_usdc?: string;
+}
+
+type PreviewFetch = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<GateResponse> }>;
+
+export declare function buildPreviewUrl(args?: GateArgs): string;
+export declare function fundOnrampHint(): string;
+export declare function fetchGatePreview(
+  args?: GateArgs,
+  opts?: { previewFetch?: PreviewFetch }
+): Promise<GateResponse>;
+/**
+ * Fetch a gate verdict, degrading OPEN to the free preview when the paid call
+ * cannot be paid (no key / unfunded wallet -> 402). Throws only when both the
+ * paid route and the preview are unreachable.
+ */
+export declare function fetchGateOrPreview(
+  payFetch: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<GateResponse> }>,
+  args?: GateArgs,
+  opts?: { hasKey?: boolean; previewFetch?: PreviewFetch }
 ): Promise<GateResponse>;
 
 export interface TokenReportResponse {
