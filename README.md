@@ -33,11 +33,7 @@ This is a **heuristic pre-trade risk signal**, not financial advice and not a gu
 npm install github:rezearcher/plugin-swap-gate
 ```
 
-This is the recommended path — it always pulls the current build and compiles on install. Also available on npm (scoped):
-
-```bash
-npm install @grey-ridge/elizaos-plugin-swap-gate
-```
+This is the recommended path — it always pulls the current build (keyless free preview + inline x402) and compiles on install. The scoped npm package `@grey-ridge/elizaos-plugin-swap-gate` exists but is pinned behind the git build during the 0.1.3 rollout — use the git install above for the current behaviour.
 
 Add it to your character/agent plugins:
 
