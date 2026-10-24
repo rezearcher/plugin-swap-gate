@@ -40,6 +40,15 @@ export interface TradeDecision {
 export declare function extractToken(text: string | null | undefined): string | null;
 export declare function buildGateUrl(args?: GateArgs): string;
 export declare function summarizeGate(out: GateResponse | null | undefined): string;
+
+export interface SizingValues {
+  roundtrip_breakeven_pct: number | null;
+  max_safe_notional_usd: number | null;
+  exit_slippage_pct: number | null;
+  exit_net_recovered_usd: number | null;
+}
+export declare function summarizeSizing(out: GateResponse | null | undefined): string;
+export declare function sizingValues(out: GateResponse | null | undefined): SizingValues | null;
 export declare function evaluateTrade(
   out: GateResponse | null | undefined,
   opts?: { maxBreakevenPct?: number; maxExitSlippagePct?: number }
