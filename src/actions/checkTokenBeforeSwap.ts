@@ -1,0 +1,126 @@
+import type {
+  Action,
+  ActionResult,
+  HandlerCallback,
+  HandlerOptions,
+  IAgentRuntime,
+  Memory,
+  State,
+} from "@elizaos/core";
+import { makePayFetch } from "../client.js";
+// Core money-logic lives in a dependency-free module so it is unit-tested
+// without the agent runtime. Imported with the .mjs extension on purpose.
+import {
+  extractToken,
+  fetchGate,
+  summarizeGate,
+  evaluateTrade,
+  GATE_BASE,
+} from "../gate.mjs";
+
+function num(runtime: IAgentRuntime, key: string, fallback: number): number {
+  const v = runtime.getSetting(key);
+  const n = v == null ? NaN : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Pre-trade safety gate. Call this BEFORE any Base swap: it runs Grey Ridge
+ * /gate/swap (honeypot + sellability + admin-control + liquidity-vs-size) and
+ * returns GO / HOLD / BLOCK plus a sizing-aware go/no-go the agent can branch on.
+ */
+export const checkTokenBeforeSwap: Action = {
+  name: "CHECK_TOKEN_BEFORE_SWAP",
+  similes: ["HONEYPOT_CHECK", "TOKEN_SAFETY", "PRE_TRADE_SAFETY", "SWAP_GUARD"],
+  description:
+    "Pre-trade honeypot/tax/liquidity safety check for a Base token via Grey Ridge /gate/swap ($0.008 USDC per call). Returns GO/HOLD/BLOCK and a round-trip-friction-aware decision. Run before every swap.",
+
+  validate: async (runtime: IAgentRuntime, message: Memory): Promise<boolean> => {
+    // Usable whenever the message carries a Base token address; a configured
+    // key only decides paid vs free-preview, it does not gate the action.
+    const text = (message?.content?.text as string) || "";
+    return !!extractToken(text) || !!runtime.getSetting("SWAP_GATE_TOKEN");
+  },
+
+  handler: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+    _state?: State,
+    options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    try {
+      // ElizaOS passes options as a HandlerOptions bag with an index signature,
+      // so caller-supplied token/side/notional arrive as `unknown` — read + narrow.
+      const optToken = typeof options?.token === "string" ? (options.token as string) : undefined;
+      const optSide = options?.side === "sell" || options?.side === "buy" ? (options.side as string) : undefined;
+      const optNotional = typeof options?.notional_usd === "number" ? (options.notional_usd as number) : undefined;
+
+      const text = (message?.content?.text as string) || "";
+      const token =
+        optToken ||
+        (runtime.getSetting("SWAP_GATE_TOKEN") as string) ||
+        extractToken(text);
+      if (!token) {
+        const msg = "No Base token address (0x…40 hex) found to check.";
+        await callback?.({ text: msg });
+        return { success: false, text: msg };
+      }
+
+      const side = optSide === "sell" ? "sell" : "buy";
+      const notionalUsd = optNotional ?? num(runtime, "SWAP_GATE_NOTIONAL_USD", 100);
+      const base = (runtime.getSetting("SWAP_GATE_BASE_URL") as string) || GATE_BASE;
+      const privateKey = runtime.getSetting("SWAP_GATE_PRIVATE_KEY") as string | undefined;
+
+      const payFetch = makePayFetch(privateKey);
+      const out = await fetchGate(payFetch, { token, side, notionalUsd, base });
+
+      const maxBreakevenPct = num(runtime, "SWAP_GATE_MAX_BREAKEVEN_PCT", 15);
+      const maxExitSlippagePct = num(runtime, "SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT", 10);
+      const verdict = evaluateTrade(out, { maxBreakevenPct, maxExitSlippagePct });
+
+      const summary = summarizeGate(out);
+      const text2 = verdict.go
+        ? `✅ ${summary} — safe to proceed.`
+        : `⛔ ${summary} — skip: ${verdict.reasons.join("; ")}.`;
+
+      await callback?.({ text: text2, content: out });
+
+      return {
+        success: true,
+        text: text2,
+        values: { proceed: verdict.go, decision: out.decision, risk_score: out.risk_score },
+        data: { gate: out, verdict },
+      };
+    } catch (error) {
+      const text = `Pre-trade safety check failed: ${(error as Error).message}`;
+      await callback?.({ text });
+      return { success: false, text, error: error as Error };
+    }
+  },
+
+  examples: [
+    [
+      { name: "{{user}}", content: { text: "Should I buy 0x4ed4e862860bed51a9570b96d89af5e1b0efefed?" } },
+      {
+        name: "{{agent}}",
+        content: {
+          text: "Running a pre-trade safety check…",
+          actions: ["CHECK_TOKEN_BEFORE_SWAP"],
+        },
+      },
+    ],
+    [
+      { name: "{{user}}", content: { text: "Is 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 a honeypot?" } },
+      {
+        name: "{{agent}}",
+        content: {
+          text: "Checking honeypot/tax/liquidity before any swap.",
+          actions: ["CHECK_TOKEN_BEFORE_SWAP"],
+        },
+      },
+    ],
+  ],
+};
+
+export default checkTokenBeforeSwap;

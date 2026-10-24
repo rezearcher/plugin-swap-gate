@@ -1,0 +1,88 @@
+{
+  "name": "plugin-swap-gate",
+  "version": "0.1.0",
+  "description": "Pre-trade token-safety gate for Base trading agents (ElizaOS): honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC ($0.008/call). Call before every swap.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "images"],
+  "keywords": [
+    "plugin",
+    "elizaos",
+    "x402",
+    "base",
+    "token-safety",
+    "honeypot",
+    "pre-trade",
+    "defi",
+    "trading-agent"
+  ],
+  "license": "MIT",
+  "author": "Grey Ridge Signals Group LLC",
+  "homepage": "https://x402-data-api.sigrunner.workers.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rezearcher/plugin-swap-gate.git"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc -p tsconfig.check.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@x402/core": "^2.15.0",
+    "@x402/evm": "^2.15.0",
+    "@x402/fetch": "^2.15.0",
+    "viem": "^2.21.0"
+  },
+  "peerDependencies": {
+    "@elizaos/core": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@elizaos/core": "^1.7.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0"
+  },
+  "agentConfig": {
+    "pluginType": "elizaos:plugin:1.0.0",
+    "pluginParameters": {
+      "SWAP_GATE_PRIVATE_KEY": {
+        "type": "string",
+        "description": "Hex private key of the agent's Base trading wallet; signs the x402 USDC payment ($0.008/call). Omit to use only the free preview path.",
+        "required": false,
+        "sensitive": true
+      },
+      "SWAP_GATE_NOTIONAL_USD": {
+        "type": "number",
+        "description": "Default trade size in USD used for the liquidity/price-impact and sizing checks.",
+        "required": false,
+        "default": 100
+      },
+      "SWAP_GATE_MAX_BREAKEVEN_PCT": {
+        "type": "number",
+        "description": "Skip a trade whose round-trip friction (entry+exit slippage) exceeds this percent.",
+        "required": false,
+        "default": 15
+      },
+      "SWAP_GATE_MAX_EXIT_SLIPPAGE_PCT": {
+        "type": "number",
+        "description": "Skip a trade whose modelled exit slippage exceeds this percent.",
+        "required": false,
+        "default": 10
+      },
+      "SWAP_GATE_BASE_URL": {
+        "type": "string",
+        "description": "Override the gate endpoint base URL (defaults to the hosted Grey Ridge Worker).",
+        "required": false
+      }
+    }
+  }
+}
