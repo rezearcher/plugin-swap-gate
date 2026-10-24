@@ -1,6 +1,6 @@
 {
-  "name": "plugin-swap-gate",
-  "version": "0.1.1",
+  "name": "@grey-ridge/elizaos-plugin-swap-gate",
+  "version": "0.1.2",
   "description": "Pre-trade token-safety gate for Base trading agents (ElizaOS): honeypot, sellability, admin-control and liquidity-vs-size checks via Grey Ridge /gate/swap, paid inline with x402 USDC ($0.008/call). Call before every swap.",
   "type": "module",
   "main": "dist/index.js",
@@ -29,7 +29,7 @@
   "homepage": "https://x402-data-api.sigrunner.workers.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rezearcher/plugin-swap-gate.git"
+    "url": "git+https://github.com/rezearcher/x402-data-api.git"
   },
   "scripts": {
     "build": "tsup",
