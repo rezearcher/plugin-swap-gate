@@ -4,6 +4,8 @@ import {
   extractToken,
   buildGateUrl,
   summarizeGate,
+  summarizeSizing,
+  sizingValues,
   evaluateTrade,
   fetchGate,
   GATE_BASE,
@@ -34,6 +36,37 @@ test("summarizeGate renders a human one-liner", () => {
   assert.match(s, /^GO:/);
   assert.match(s, /risk 25\/100/);
   assert.match(s, /liquidity \$158,115,578/);
+});
+
+const SIZING = {
+  max_safe_notional_usd: 12400,
+  this_trade: { notional_usd: 1000, price_impact_pct: 0.6 },
+  entry_sim: { this_trade: { roundtrip_breakeven_pct: 1.2 } },
+  exit_sim: { this_trade: { slippage_pct: 0.6, net_recovered_usd: 994 } },
+};
+
+test("summarizeSizing renders the paid sizing moat line; empty without a pool", () => {
+  const s = summarizeSizing({ decision: "go", sizing: SIZING });
+  assert.match(s, /breakeven 1\.2%/);
+  assert.match(s, /max safe size \$12,400/);
+  assert.match(s, /exit slip 0\.6% \(recover \$994 of \$1,000\)/);
+  assert.equal(summarizeSizing({ decision: "go" }), "");
+  assert.equal(summarizeSizing({ decision: "block" }), "");
+});
+
+test("summarizeGate folds the sizing line into a GO summary", () => {
+  const s = summarizeGate({ decision: "go", risk_score: 25, liquidity_usd: 620000, sizing: SIZING });
+  assert.match(s, /^GO:/);
+  assert.match(s, /max safe size \$12,400/);
+});
+
+test("sizingValues extracts the structured moat numbers; null without a pool", () => {
+  const v = sizingValues({ sizing: SIZING });
+  assert.equal(v.roundtrip_breakeven_pct, 1.2);
+  assert.equal(v.max_safe_notional_usd, 12400);
+  assert.equal(v.exit_slippage_pct, 0.6);
+  assert.equal(v.exit_net_recovered_usd, 994);
+  assert.equal(sizingValues({ decision: "go" }), null);
 });
 
 test("evaluateTrade blocks on a non-go decision", () => {
