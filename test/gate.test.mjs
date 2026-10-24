@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   extractToken,
   buildGateUrl,
+  buildPreviewUrl,
+  fetchGateOrPreview,
   summarizeGate,
   summarizeSizing,
   sizingValues,
@@ -111,6 +113,57 @@ test("fetchGate parses a 200 gate response", async () => {
   const fakeFetch = async () => ({ ok: true, status: 200, json: async () => body });
   const out = await fetchGate(fakeFetch, { token: USDC });
   assert.equal(out.decision, "go");
+});
+
+test("buildPreviewUrl targets the free /gate/swap/preview route", () => {
+  const url = buildPreviewUrl({ token: USDC, side: "buy", notionalUsd: 100 });
+  assert.ok(url.startsWith(`${GATE_BASE}/gate/swap/preview?`));
+  assert.ok(url.includes(`token=${USDC}`));
+  assert.throws(() => buildPreviewUrl({ token: "0xdead" }), /invalid Base token/);
+});
+
+test("fetchGateOrPreview: no key reads the preview directly + attaches activation", async () => {
+  const previewBody = { decision: "go", reason: "passes checks", risk_score: 20 };
+  const previewFetch = async () => ({ ok: true, status: 200, json: async () => previewBody });
+  // payFetch must NOT run without a key — prove it by throwing.
+  const payFetch = async () => {
+    throw new Error("payFetch must not run without a configured key");
+  };
+  const out = await fetchGateOrPreview(payFetch, { token: USDC }, { hasKey: false, previewFetch });
+  assert.equal(out.decision, "go");
+  assert.equal(out.paid, false);
+  assert.ok(out.activation && out.activation.needed);
+  assert.match(out.activation.hint, /FREE preview mode/);
+  assert.match(out.activation.reason, /no SWAP_GATE_PRIVATE_KEY/);
+});
+
+test("fetchGateOrPreview: funded wallet (paid 200) returns the paid body, no activation", async () => {
+  const body = { decision: "go", reason: "ok", risk_score: 25, sizing: { max_safe_notional_usd: 12400 } };
+  const payFetch = async () => ({ ok: true, status: 200, json: async () => body });
+  const out = await fetchGateOrPreview(payFetch, { token: USDC }, { hasKey: true });
+  assert.equal(out.paid, true);
+  assert.equal(out.activation, undefined);
+  assert.equal(out.sizing.max_safe_notional_usd, 12400);
+});
+
+test("fetchGateOrPreview: unfunded 402 falls back to the preview + activation (unlock hint)", async () => {
+  const previewBody = { decision: "block", reason: "honeypot" };
+  const previewFetch = async () => ({ ok: true, status: 200, json: async () => previewBody });
+  const payFetch = async () => ({ ok: false, status: 402, json: async () => ({}) });
+  const out = await fetchGateOrPreview(payFetch, { token: USDC }, { hasKey: true, previewFetch });
+  assert.equal(out.decision, "block"); // preview still catches the honeypot
+  assert.equal(out.paid, false);
+  assert.ok(out.activation.needed);
+  assert.match(out.activation.reason, /wallet not funded/);
+});
+
+test("fetchGateOrPreview: THROWS when both paid (402) and preview are down (fail-closed signal)", async () => {
+  const previewFetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  const payFetch = async () => ({ ok: false, status: 402, json: async () => ({}) });
+  await assert.rejects(
+    () => fetchGateOrPreview(payFetch, { token: USDC }, { hasKey: true, previewFetch }),
+    /gate preview failed: HTTP 503/
+  );
 });
 
 // Live check against the real deployed Worker. The free path returns an x402
