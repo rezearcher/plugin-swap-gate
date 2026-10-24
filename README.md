@@ -30,9 +30,11 @@ This is a **heuristic pre-trade risk signal**, not financial advice and not a gu
 ## Install
 
 ```bash
-npm install plugin-swap-gate
-# or: bun add plugin-swap-gate
+npm install github:rezearcher/plugin-swap-gate
+# or: bun add github:rezearcher/plugin-swap-gate
 ```
+
+Installs directly from source — the build is committed, so there is nothing to compile.
 
 Add it to your character/agent plugins:
 
