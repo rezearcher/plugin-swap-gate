@@ -30,11 +30,14 @@ This is a **heuristic pre-trade risk signal**, not financial advice and not a gu
 ## Install
 
 ```bash
-npm install @grey-ridge/elizaos-plugin-swap-gate
-# or: bun add @grey-ridge/elizaos-plugin-swap-gate
+npm install github:rezearcher/plugin-swap-gate
 ```
 
-Installs directly from source — the build is committed, so there is nothing to compile.
+This is the recommended path — it always pulls the current build and compiles on install. Also available on npm (scoped):
+
+```bash
+npm install @grey-ridge/elizaos-plugin-swap-gate
+```
 
 Add it to your character/agent plugins:
 
